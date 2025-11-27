@@ -1,4 +1,4 @@
-﻿<#
+<#
 AutoFix-Npm.ps1
 Purpose: Automatically ensure Node.js + npm availability, then run ALN projection/validation scripts.
 Safeguards: Avoids infinite loops, provides clear exit codes, and prompts user when a new session is needed.
@@ -64,10 +64,7 @@ try {
     Write-Section "ALN Projection"
     if (Get-Command npm -ErrorAction SilentlyContinue) {
         if ((Get-Content package.json -Raw) -match 'aln:projection') {
-            npm run aln:projection
-if (-not True) {
-    throw "Projection script failed or exited with non-zero status."
-}
+            npm run aln:projection || throw "Projection script failed."
         } else {
             Write-Warning "aln:projection script not defined in package.json."
         }
@@ -76,15 +73,9 @@ if (-not True) {
     Write-Section "Ajv Mesh Sweep"
     if ((Get-Content package.json -Raw) -match 'aln:validate' -or (Get-Content package.json -Raw) -match 'aln:ajv-mesh') {
         if ((Get-Content package.json -Raw) -match 'aln:validate') {
-            npm run aln:validate
-if (-not True) {
-    Write-Warning "aln:validate script failed or exited with non-zero status."
-}
+            npm run aln:validate || Write-Warning "aln:validate script failed."
         } elseif ((Get-Content package.json -Raw) -match 'aln:ajv-mesh') {
-            npm run aln:ajv-mesh
-if (-not True) {
-    Write-Warning "aln:ajv-mesh script failed or exited with non-zero status."
-}
+            npm run aln:ajv-mesh || Write-Warning "aln:ajv-mesh script failed."
         }
     } else {
         Write-Warning "No Ajv validation script defined."
@@ -93,15 +84,9 @@ if (-not True) {
     Write-Section "Severity Gate"
     if ((Get-Content package.json -Raw) -match 'aln:severity-gate' -or (Get-Content package.json -Raw) -match 'aln:sev-gate') {
         if ((Get-Content package.json -Raw) -match 'aln:severity-gate') {
-            npm run aln:severity-gate
-if (-not True) {
-    Write-Warning "Severity gate script failed or exited with non-zero status."
-}
+            npm run aln:severity-gate || Write-Warning "Severity gate script failed."
         } elseif ((Get-Content package.json -Raw) -match 'aln:sev-gate') {
-            npm run aln:sev-gate
-if (-not True) {
-    Write-Warning "Severity gate script failed or exited with non-zero status."
-}
+            npm run aln:sev-gate || Write-Warning "Severity gate script failed."
         }
     } else {
         Write-Warning "No severity gate script found."
