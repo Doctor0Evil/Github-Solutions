@@ -1,0 +1,27 @@
+{
+  "name": "github-solutions-aln",
+  "version": "1.0.0",
+  "description": "ALN (Advanced Language Notation) GitHub Actions CI/CD integration",
+  "private": true,
+  "scripts": {
+    "aln:convert": "node scripts/aln-to-json-projection.cjs",
+    "aln:validate": "node scripts/aln-ajv-mesh-sweep.cjs",
+    "aln:severity-gate": "node scripts/aln-severity-gate.cjs",
+    "aln:metatest": "node scripts/aln-copilot-metatest.cjs",
+    "aln:ci": "npm run aln:convert && npm run aln:validate && npm run aln:severity-gate"
+  },
+  "keywords": [
+    "aln",
+    "github-actions",
+    "copilot",
+    "governance",
+    "ci-cd"
+  ],
+  "author": "Doctor0Evil",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "ajv": "^8.12.0",
+    "ajv-formats": "^3.0.1",
+    "glob": "^10.3.10"
+  }
+}
