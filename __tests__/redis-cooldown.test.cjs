@@ -140,4 +140,31 @@ describe('Redis-backed endpoint cooldown', () => {
     // After success, there should either be no cooldown key or it can be newly set (we don't enforce); ensure nock was hit
     expect(scope.isDone()).toBe(true);
   });
+
+  test('Scenario 4: redis returns null (no cooldown) and governor proceeds', async () => {
+    const redis = new MockRedisClient();
+    const sleepCalls = [];
+    const sleepFn = (ms) => {
+      sleepCalls.push(ms);
+      return Promise.resolve();
+    };
+
+    const adapter = new RedisCooldownAdapter(redis, 'rg_test');
+    const gov = new GitHubRateGovernor({ redisAdapter: adapter, redisCooldownPrefix: 'rg_test', redisCooldownBehavior: 'sleep', sleepFn });
+    const baseUrl = 'https://api.github.com/test/redis4';
+    const key = `GET ${baseUrl}`;
+    const ridKey = `rg_test:${encodeURIComponent(key)}`;
+
+    // Ensure redis returns null (no key set)
+    const v = await adapter.get(key);
+    expect(v).toBeNull();
+
+    const scope = nock('https://api.github.com')
+      .get('/test/redis4')
+      .reply(200, [{ id: 1 }], { ETag: '"p1-v1"' });
+
+    const res = await gov.perform('GET', baseUrl, {}, null, { etag_key: 'r4', endpointKey: key });
+    expect(res.status).toBe(200);
+    expect(scope.isDone()).toBe(true);
+  }, 15000);
 });

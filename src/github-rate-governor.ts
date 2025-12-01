@@ -2,26 +2,26 @@ import https from 'https';
 import { URL } from 'url';
 
 export interface RateGovernorConfig {
-  globalMaxConcurrent: number;
-  softBurstWindowMs: number;
-  softBurstMaxReq: number;
-  globalQps: number;
-  backoffBaseMs: number;
-  backoffMaxMs: number;
-  maxAttempts: number;
-  randomFn?: () => number;
-  sleepFn?: (ms: number) => Promise<void>;
-  tokenRefresh?: () => Promise<string>;
-  redisClient?: {
+  readonly globalMaxConcurrent: number;
+  readonly softBurstWindowMs: number;
+  readonly softBurstMaxReq: number;
+  readonly globalQps: number;
+  readonly backoffBaseMs: number;
+  readonly backoffMaxMs: number;
+  readonly maxAttempts: number;
+  readonly randomFn?: () => number;
+  readonly sleepFn?: (ms: number) => Promise<void>;
+  readonly tokenRefresh?: () => Promise<string>;
+  readonly redisClient?: {
     get(key: string): Promise<string | null>;
     set(key: string, value: string, mode: 'PX', ttlMs: number, nxFlag: 'NX'): Promise<unknown>;
     pttl(key: string): Promise<number>;
   } | null;
-  redisAdapter?: import('./redis-adapter').RedisCooldownAdapter | null;
-  redisCooldownPrefix?: string;
-  redisCooldownBehavior?: 'sleep' | 'synthetic';
-  jitterMs?: number;
-  metricsSink?: import('./metrics').MetricsSink | null;
+  readonly redisAdapter?: import('./redis-adapter').RedisCooldownAdapter | null;
+  readonly redisCooldownPrefix?: string;
+  readonly redisCooldownBehavior?: 'sleep' | 'synthetic';
+  readonly jitterMs?: number;
+  readonly metricsSink?: import('./metrics').MetricsSink | null;
 }
 
 export interface HttpResponse {
@@ -90,7 +90,7 @@ export class GitHubRateGovernor {
     this.redisAdapter = (this.config as any).redisAdapter || null;
     this._tokenRefreshFn = this.config.tokenRefresh;
     this.sleepFn = this.config.sleepFn;
-    this.metricsSink = (config as any).metricsSink;
+    this.metricsSink = this.config.metricsSink || undefined;
   }
 
   private jitterMs(base: number): number {
@@ -114,31 +114,39 @@ export class GitHubRateGovernor {
   }
 
   private updateFromHeaders(h: Record<string, string>) {
-    const lookup = (name: string) => Object.keys(h).find((k) => k.toLowerCase() === name.toLowerCase());
-    const r = lookup('x-ratelimit-remaining');
-    if (r) {
-      const parsed = parseInt(h[r], 10);
+    const getHeader = (name: string): string | undefined => {
+      const key = Object.keys(h).find((k) => k.toLowerCase() === name.toLowerCase());
+      return key ? h[key] : undefined;
+    };
+    const rem = getHeader('x-ratelimit-remaining');
+    if (rem !== undefined) {
+      const parsed = parseInt(rem, 10);
       if (!Number.isNaN(parsed)) this.remainingLimit = parsed;
     }
-    const z = lookup('x-ratelimit-reset');
-    if (z) {
-      const epoch = parseInt(h[z], 10);
+    const reset = getHeader('x-ratelimit-reset');
+    if (reset !== undefined) {
+      const epoch = parseInt(reset, 10);
       if (!Number.isNaN(epoch) && epoch > 0) this.resetAt = new Date(epoch * 1000);
     }
   }
 
   private computeRetryAfterMs(headers: Record<string, string>, attempt: number) {
-    const lookup = (name: string) => Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase());
-    const ra = lookup('retry-after');
-    if (ra) {
-      const sec = parseInt(headers[ra] as string, 10);
+    const getHeader = (name: string): string | undefined => {
+      const key = Object.keys(headers).find((k) => k.toLowerCase() === name.toLowerCase());
+      return key ? headers[key] : undefined;
+    };
+    const ra = getHeader('retry-after');
+    if (ra !== undefined) {
+      const sec = parseInt(ra, 10);
       const val = (Number.isNaN(sec) ? 60 : sec) * 1000;
       return this.jitterMs(val);
     }
     const base = (this.config.backoffBaseMs || 1000) * Math.pow(2, Math.max(0, attempt - 1));
     const max = this.config.backoffMaxMs || 60_000;
     const capped = base > max ? max : base;
-    return this.jitterMs(capped);
+    const jittered = this.jitterMs(capped);
+    const maxVal = this.config.backoffMaxMs || 60000;
+    return jittered > maxVal ? maxVal : jittered;
   }
 
   private async requestRaw(method: HttpMethod, urlStr: string, headers: Record<string, string>, body: string | null): Promise<HttpResponse> {
@@ -253,7 +261,10 @@ export class GitHubRateGovernor {
         await this.sleep(cooldownMs);
       }
       const etagKey: EtagKey = (opts.etag_key as EtagKey) || (url as EtagKey);
-      if (this.etagCache[etagKey]) headers['If-None-Match'] = this.etagCache[etagKey];
+      const cachedEtag = this.etagCache[etagKey];
+      if (cachedEtag !== undefined && cachedEtag !== null && cachedEtag !== '') {
+        headers['If-None-Match'] = cachedEtag;
+      }
       headers = Object.assign(this.defaultHeaders(), headers);
 
       let attempt = 0;
@@ -276,8 +287,12 @@ export class GitHubRateGovernor {
           continue;
         }
         this.recentWindow.push(Date.now());
-        this.updateFromHeaders(resp.headers);
-        if (resp.headers['etag'] && resp.status === 200) this.etagCache[etagKey] = resp.headers['etag'];
+        this.updateFromHeaders(resp.headers || {});
+        const respEtag = ((): string | undefined => {
+          const found = Object.keys(resp.headers).find(k => k.toLowerCase() === 'etag');
+          return found ? resp.headers[found] : undefined;
+        })();
+        if (respEtag !== undefined && respEtag !== null && resp.status === 200) this.etagCache[etagKey] = respEtag;
         // metrics: request complete
         if (this.metricsSink) {
           const duration = Date.now() - this.lastRequestTs;

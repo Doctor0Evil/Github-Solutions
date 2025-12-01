@@ -81,6 +81,31 @@ describe('Backoff & Retry-After behavior', () => {
     expect(scope.isDone()).toBe(true);
   }, 20000);
 
+  test('Scenario: missing X-RateLimit headers are handled safely', async () => {
+    const sleepCalls = [];
+    const sleepFn = (ms) => {
+      sleepCalls.push(ms);
+      return Promise.resolve();
+    };
+
+    const gov = new GitHubRateGovernor({ sleepFn, randomFn: () => 0 });
+    const baseUrl = `${API_BASE}${RESOURCE_PATH}`;
+
+    // Nock returns no X-RateLimit headers
+    const scope = nock(API_BASE)
+      .get(RESOURCE_PATH)
+      .reply(200, [{ id: 1 }], { ETag: '"no-rate-headers"' });
+
+    const beforeRemaining = gov.remainingLimit;
+    const beforeReset = gov.resetAt.getTime();
+
+    const resp = await gov.perform('GET', baseUrl, {}, null, { etag_key: 'b-no-rl' });
+    expect(resp.status).toBe(200);
+    expect(gov.remainingLimit).toBe(beforeRemaining); // unchanged
+    expect(gov.resetAt.getTime()).toBe(beforeReset); // unchanged
+    expect(scope.isDone()).toBe(true);
+  }, 10000);
+
   test('Scenario 3: shared hard block causes other requests to be delayed', async () => {
     const sleepCalls = [];
     const sleepFn = (ms) => {

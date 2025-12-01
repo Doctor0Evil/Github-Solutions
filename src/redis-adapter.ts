@@ -16,7 +16,8 @@ export class RedisCooldownAdapter {
   }
   async get(endpointKey: string) {
     const k = this.buildKey(endpointKey);
-    return await this.client.get(k);
+    const v = await this.client.get(k);
+    return v !== null ? v : null;
   }
   async setNxWithTtl(endpointKey: string, retryUntilMs: number, ttlMs: number) {
     const k = this.buildKey(endpointKey);

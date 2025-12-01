@@ -169,5 +169,43 @@ describe('Paginated ETag conditional requests', () => {
     expect(r2.pageCount).toBe(0);
     expect(r2.cacheHit).toBe(true);
     expect(scope2.isDone()).toBe(true);
+
+    // Ensure ETag cache remains unchanged when 304 contains no ETag and no Link header
+    const cache3 = gov.getEtagCacheSnapshot();
+    expect(cache3[p1Key]).toBe('"p1-v1"');
+    expect(cache3[p2Key]).toBe('"p2-v1"');
+  });
+
+  test('page 1 304 with no ETag or Link does not crash and keeps cache', async () => {
+    const gov = makeGovernor();
+    const baseUrl = `${API_BASE}${RESOURCE_PATH}`;
+    const p1Query = { page: 1, per_page: 100 };
+    const p1Url = `${baseUrl}?page=1&per_page=100`;
+
+    // Initial run: page 1 returns 200 with ETag
+    const p1v1 = { status: 200, headers: { ETag: '"p1-v1"' }, body: JSON.stringify([{ id: 1 }]) };
+    const scope = nock(API_BASE)
+      .get(RESOURCE_PATH)
+      .query(p1Query)
+      .reply(200, [{ id: 1 }], { ETag: '"p1-v1"' });
+
+    const r1 = await gov.paginateWithETag(baseUrl, 100);
+    expect(r1.changed).toBe(true);
+    expect(scope.isDone()).toBe(true);
+
+    // Now simulate 304 with no ETag and no Link
+    const scope2 = nock(API_BASE)
+      .get(RESOURCE_PATH)
+      .query(p1Query)
+      .matchHeader('If-None-Match', '"p1-v1"')
+      .reply(304, '', {});
+
+    const r2 = await gov.paginateWithETag(baseUrl, 100);
+    expect(r2.changed).toBe(false);
+    expect(r2.cacheHit).toBe(true);
+    expect(scope2.isDone()).toBe(true);
+
+    const cache = gov.getEtagCacheSnapshot();
+    expect(cache[p1Url]).toBe('"p1-v1"');
   });
 });
