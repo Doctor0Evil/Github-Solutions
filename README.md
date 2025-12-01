@@ -13,6 +13,7 @@
 GitHub-Solutions provides a robust framework combining ALN (Advanced Language Notation) governance, comprehensive CI/CD workflows, and supporting Node.js + PowerShell tooling designed to elevate GitHub platform capabilities and community collaboration.
 
 Our objective is to enforce strict compliance, streamline project workflows, and empower developers with advanced validation and governance tools — improving stability, security, and collaboration across GitHub ecosystems.
+![CI](https://github.com/Doctor0Evil/Github-Solutions/actions/workflows/ci.yml/badge.svg)
 
 ## Core Structure Overview
 
