@@ -3,3 +3,4 @@ export type { RateGovernorConfig, HttpResponse, PaginateResult, HttpMethod, Endp
 export type { MetricsSink } from './metrics';
 export { PrometheusSink } from './metrics';
 export { RedisCooldownAdapter, MockRedisClient, RedisClientLike } from './redis-adapter';
+export * as Drift from './drift';

@@ -142,3 +142,23 @@ This README.md is designed to empower developers and maintainers with comprehens
 For more, explore GitHub's built-in collaboration features, advanced security integrations, and automation tools that support agile, secure development and deployment [GitHub Overview].[14][15][17]
 
 ***
+
+## Drift detection prototypes
+
+This repo now contains a prototype of drift detection and incremental analysis features in `src/drift` and `src/lsp`.
+
+Key files:
+- `src/drift/dependency-graph.ts`: module/file dependency graph with reverse closure for impacted file analysis.
+- `src/drift/test-impact.ts`: test-impact analyzer combining coverage and historical failure data to score impacted tests.
+- `src/drift/cache-key.ts`: cache key generation for analysis/build tools by mixing content, config, tool versions and dependency signatures.
+- `src/lsp/semantic-drift.ts`: example LSP diagnostic skeleton for semantic drift heuristics.
+- `scripts/semgrep/semantic-drift-rules.yml`: sample semgrep rules that can be used in CI to detect control-flow regressions.
+
+Run the tests after installing dependencies:
+```powershell
+npm ci
+npm test
+```
+
+The CI workflow skeleton is in `.github/workflows/drift-check.yml` and demonstrates lint, unit tests, and drift checks.
+
