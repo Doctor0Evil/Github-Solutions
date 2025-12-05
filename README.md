@@ -123,11 +123,61 @@ npm run aln:severity-gate
 npm run aln:metatest
 ```
 
+## ALN Test Harness & Self-Tests
+
+The project uses an ALN cross-runtime harness that does not require Node/Python/.NET to be installed. Use these commands to run the canonical tests and harness self-checks:
+
+Windows (PowerShell):
+```powershell
+pwsh -File .aln\run-tests.ps1
+```
+
+Linux/WSL:
+```bash
+chmod +x .aln/run-tests.sh .aln/tools/validate-aln.sh
+./.aln/run-tests.sh
+```
+
+Harness self-tests (simulate missing runtimes):
+```bash
+chmod +x .aln/tests/test-crossruntime-harness.sh
+./.aln/tests/test-crossruntime-harness.sh
+```
+
+PowerShell harness self-test:
+```powershell
+pwsh -File .aln\tests\Test-CrossRuntimeHarness.ps1
+```
+
 ## Troubleshooting Tips
 
 - If `npm` commands are not recognized after automatic installation, restart your PowerShell window to refresh the environment variables.
 - For Ajv JSON schema validation errors, check detailed error reports in `reports/aln-constraint-report.json`.
 - Use `Inspect-Wasm.ps1` to debug WebAssembly binary issues during simulation pipeline additions.
+
+### Godot GDScript LSP Fix
+
+If your IDE shows the "Couldn't connect to the GDScript language server at 127.0.0.1:6008" error, run the helper script to diagnose and apply local fixes:
+
+```powershell
+node scripts/fix-godot-lsp.cjs --diagnostics
+node scripts/fix-godot-lsp.cjs --apply
+```
+
+The script will check ports (6008 and 6005), detect reachable ones, update `.vscode/settings.json`, add a safe `.vscode/launch.json` profile to launch Godot with `--lang_server`, and write a sample Neovim snippet.
+If you'd like to standardize a port across the repo, run:
+
+```powershell
+node scripts/fix-godot-lsp.cjs --force-port 6008 --save-config --apply
+```
+
+Use `--ci-fail` in CI to validate changes on PRs:
+
+```powershell
+node scripts/fix-godot-lsp.cjs --ci-fail
+```
+For copy-pasteable ops commands (netstat/ss, Godot CLI invocation, firewall commands), see `docs/drift/GODOT_LSP_OPS.md`.
+Also the CI diagnostics action (`.github/workflows/godot-lsp-diagnostics.yml`) validates Godot LSP configs on PRs that touch `*.tres` or `.vscode/`.
 
 ## Future Enhancements (Planned)
 

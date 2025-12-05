@@ -11,11 +11,14 @@
     "aln:severity-gate": "node scripts/aln-severity-gate.cjs",
     "aln:metatest": "node scripts/aln-copilot-metatest.cjs",
     "aln:ci": "npm run aln:convert && npm run aln:validate && npm run aln:severity-gate",
+    "fix:godot-lsp": "node scripts/fix-godot-lsp.cjs --apply",
+    "fix:godot-lsp:ci": "node scripts/fix-godot-lsp.cjs --ci-fail",
     "rate-governor:test": "node scripts/test-github-rate-governor.cjs",
     "build": "tsc -p tsconfig.json",
     "lint": "eslint 'src/**/*.{ts,tsx}' '__tests__/**/*.{ts,tsx,js,cjs}'",
     "lint:fix": "eslint 'src/**/*.{ts,tsx}' '__tests__/**/*.{ts,tsx,js,cjs}' --fix",
-    "test": "npm run build && jest"
+    "test": "bash -lc '.aln/run-tests.sh || pwsh -ExecutionPolicy Bypass -File .aln/run-tests.ps1'",
+    "test:node": "npm run build && jest"
   },
   "keywords": [
     "aln",
@@ -44,4 +47,5 @@
   ,
   "prepare": "npm run build"
 }
+
 
