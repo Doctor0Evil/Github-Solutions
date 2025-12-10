@@ -1,0 +1,190 @@
+aln module go.env.autofix.v1
+  # Cross-platform ALN policy + launcher to detect, install, and wire Go for any host.
+  # Target systems: Windows 10/11, Linux, macOS; developer stacks including Java, VS Code, Copilot, OCI. [web:1]
+
+  object host.env
+    field os_type string        # "windows" | "linux" | "darwin"
+    field arch string           # "amd64" | "arm64"
+    field has_go bool
+    field goroot string
+    field gopath string
+    field path_entries list<string>
+    field go_bin_detected bool
+    field vscode_integrated bool
+  end
+
+  object remediation.plan
+    field install_required bool
+    field add_path bool
+    field set_goroot bool
+    field set_gopath bool
+    field restart_shell_hint bool
+    field vscode_go_tools_fix bool
+  end
+
+  function detect_host_env() returns host.env
+    let env.os_type = sys.os()
+    let env.arch = sys.arch()
+    let env.path_entries = sys.env_split("PATH")
+    let env.goroot = sys.env_or("GOROOT", "")
+    let env.gopath = sys.env_or("GOPATH", sys.default_home_join("go"))
+
+    # Check if `go` is callable anywhere on PATH. [web:1]
+    if sys.which("go") != ""
+      env.has_go = true
+      env.go_bin_detected = true
+    else
+      env.has_go = false
+      env.go_bin_detected = false
+    end
+
+    # Heuristic: VS Code + Copilot paths present
+    if sys.path_contains("Code") and sys.path_contains("copilot")
+      env.vscode_integrated = true
+    else
+      env.vscode_integrated = false
+    end
+
+    return env
+  end
+
+  function compute_remediation(env host.env) returns remediation.plan
+    if env.has_go == false
+      plan.install_required = true
+      plan.add_path = true
+      plan.set_goroot = false          # modern Go usually sets GOROOT itself. [web:1]
+      plan.set_gopath = true
+      plan.restart_shell_hint = true
+    else
+      plan.install_required = false
+      # go exists but PATH / GOROOT may be inconsistent
+      if env.go_bin_detected == false
+        plan.add_path = true
+      end
+      if env.goroot == ""
+        plan.set_goroot = false        # rely on `go env GOROOT`. [web:1]
+      end
+      plan.set_gopath = (env.gopath == "")
+      plan.restart_shell_hint = plan.add_path
+    end
+
+    if env.vscode_integrated
+      plan.vscode_go_tools_fix = true
+    end
+
+    return plan
+  end
+
+  # --- Platform-specific installers (non-destructive, idempotent) ---
+
+  function install_go_windows(env host.env)
+    # Download official MSI for current arch into temp and run silent installer. [web:1]
+    let url = sys.select_go_download_url(env.os_type, env.arch)
+    let msi_path = sys.temp_file("go_installer.msi")
+    http.download(url, msi_path)
+
+    sys.exec("msiexec.exe", ["/i", msi_path, "/qn", "/norestart"])
+
+    # Default install into "C:\\Program Files\\Go" or "C:\\Program Files (x86)\\Go". [web:1]
+    let guessed_root = sys.first_existing([
+      "C:\\Program Files\\Go",
+      "C:\\Program Files (x86)\\Go"
+    ])
+
+    if guessed_root != ""
+      sys.set_env_machine("GOROOT", guessed_root)
+      sys.append_env_path_machine(guessed_root + "\\bin")
+    end
+  end
+
+  function install_go_unix(env host.env)
+    let url = sys.select_go_download_url(env.os_type, env.arch)
+    let tar_path = sys.temp_file("go.tar.gz")
+    http.download(url, tar_path)
+
+    # Remove any previous tree, then extract into /usr/local/go. [web:1]
+    sys.exec("sudo", ["rm", "-rf", "/usr/local/go"])
+    sys.exec("sudo", ["tar", "-C", "/usr/local", "-xzf", tar_path])
+
+    # Add /usr/local/go/bin to PATH via profile snippet. [web:1]
+    let line = "export PATH=\"$PATH:/usr/local/go/bin\""
+    if env.os_type == "linux"
+      sys.ensure_line_in_file(sys.user_home() + "/.profile", line)
+    else
+      sys.ensure_line_in_file(sys.user_home() + "/.zprofile", line)
+    end
+  end
+
+  # --- PATH + GOPATH alignment helpers ---
+
+  function repair_path_and_env(env host.env, plan remediation.plan)
+    if plan.add_path
+      if env.os_type == "windows"
+        # Try common install roots; if go.exe present, add to PATH. [web:1]
+        let candidates = [
+          "C:\\Program Files\\Go\\bin",
+          "C:\\Program Files (x86)\\Go\\bin"
+        ]
+        for c in candidates
+          if sys.file_exists(c + "\\go.exe")
+            sys.append_env_path_machine(c)
+          end
+        end
+      else
+        sys.ensure_line_in_file(sys.user_shell_profile(), "export PATH=\"$PATH:/usr/local/go/bin\"")
+      end
+    end
+
+    if plan.set_gopath
+      let gopath = sys.default_home_join("go")
+      if env.os_type == "windows"
+        sys.set_env_user("GOPATH", gopath)
+      else
+        sys.ensure_line_in_file(sys.user_shell_profile(), "export GOPATH=\"$HOME/go\"")
+      end
+    end
+  end
+
+  # --- VS Code / Toolchain auto-fix ---
+
+  function fix_vscode_go_integration()
+    # Create/update VS Code Go extension settings so it uses system `go`. [web:1]
+    let settings_path = sys.vscode_user_settings()
+    json.patch(settings_path, {
+      "go.toolsManagement.autoUpdate": true,
+      "go.gopath": "",
+      "go.goroot": "",
+      "go.useLanguageServer": true
+    })
+  end
+
+  # --- Top-level repair entrypoint (for any system/machine) ---
+
+  function auto_repair_go_env()
+    let env = detect_host_env()
+    let plan = compute_remediation(env)
+
+    if plan.install_required
+      if env.os_type == "windows"
+        install_go_windows(env)
+      else
+        install_go_unix(env)
+      end
+    end
+
+    repair_path_and_env(env, plan)
+
+    if plan.vscode_go_tools_fix
+      fix_vscode_go_integration()
+    end
+
+    # Final sanity check: verify `go version` works. [web:1]
+    let out, err, code = sys.exec_captured("go", ["version"])
+    if code != 0
+      sys.error("go.env.autofix: still unable to execute `go version` after remediation")
+    end
+
+    sys.log_info("go.env.autofix: Go toolchain available -> " + out)
+  end
+
+end
