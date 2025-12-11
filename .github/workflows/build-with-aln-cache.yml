@@ -1,0 +1,120 @@
+name: Build with ALN Cache Orchestrator
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      ACTIONS_CACHE_ENDPOINT: http://127.0.0.1:8080/actions-cache
+      RUNNER_OS: ${{ runner.os }}
+      RUNNER_ARCH: x64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. Start sidecar (ALN Cache Orchestrator HTTP service)
+      - name: Start Actions Cache Orchestrator sidecar
+        run: |
+          docker run -d --rm \
+            -p 8080:8080 \
+            --name acorch-sidecar \
+            ghcr.io/your-org/actions-cache-sidecar:stable
+
+      # 2. Restore via ALN Orchestrator (primary path)
+      - name: Restore build cache via ALN orchestrator
+        id: aln-restore
+        shell: bash
+        run: |
+          set -e
+
+          KEY_CONTEXT=$(cat <<'JSON'
+          {
+            "repo_id": "${{ github.repository_id }}",
+            "workflow_id": "${{ github.run_id }}",
+            "job_id": "${{ github.run_number }}",
+            "action_slug": "build",
+            "runner_os": "${{ env.RUNNER_OS }}",
+            "runner_arch": "${{ env.RUNNER_ARCH }}",
+            "dependency_fingerprint_sha256": "${{ hashFiles('package-lock.json') }}",
+            "aln_policy_revision": "acorch-01-ALN-001"
+          }
+          JSON
+          )
+
+          RESPONSE=$(curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -d "${KEY_CONTEXT}" \
+            "${ACTIONS_CACHE_ENDPOINT}/restore")
+
+          echo "ALN_RESTORE_RESPONSE=${RESPONSE}" >> "$GITHUB_ENV"
+
+      # 3. Fallback to native actions/cache if ALN orchestrator has no data
+      - name: Fallback restore via actions/cache
+        id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # 4. Install dependencies (will reuse whatever was restored)
+      - name: Install dependencies
+        run: npm ci
+
+      # 5. Build
+      - name: Build
+        run: npm run build
+
+      # 6. Store via ALN Orchestrator (primary write path)
+      - name: Store build cache via ALN orchestrator
+        if: success()
+        shell: bash
+        run: |
+          set -e
+
+          # Estimate compute cost from job timing (simplified)
+          ESTIMATE_MS=$(( (60 * 1000) ))
+
+          KEY_CONTEXT=$(cat <<'JSON'
+          {
+            "repo_id": "${{ github.repository_id }}",
+            "workflow_id": "${{ github.run_id }}",
+            "job_id": "${{ github.run_number }}",
+            "action_slug": "build",
+            "runner_os": "${{ env.RUNNER_OS }}",
+            "runner_arch": "${{ env.RUNNER_ARCH }}",
+            "dependency_fingerprint_sha256": "${{ hashFiles('package-lock.json') }}",
+            "aln_policy_revision": "acorch-01-ALN-001",
+            "object_size_bytes": 0,
+            "estimated_compute_ms": ESTIMATE_PLACEHOLDER
+          }
+          JSON
+          )
+
+          KEY_CONTEXT=${KEY_CONTEXT/ESTIMATE_PLACEHOLDER/${ESTIMATE_MS}}
+
+          curl -sS -X POST \
+            -H "Content-Type: application/json" \
+            -d "${KEY_CONTEXT}" \
+            "${ACTIONS_CACHE_ENDPOINT}/store"
+
+      # 7. Native cache save as safety net (optional)
+      - name: Save cache via actions/cache
+        if: success()
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: node-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      # 8. Upload artifacts as usual (orthogonal to cache)
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
