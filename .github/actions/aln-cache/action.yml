@@ -1,0 +1,146 @@
+name: "ALN Actions Cache Orchestrator"
+description: "Restore/store cache via ALN Cache Orchestrator with safe fallback to actions/cache"
+author: "Biomechanica"
+
+inputs:
+  cache-path:
+    description: "Path to cache (e.g., node_modules)"
+    required: true
+  dependency-key-files:
+    description: "File pattern(s) used to compute dependency fingerprint"
+    required: true
+  action-slug:
+    description: "Logical action name (e.g., build, test)"
+    required: true
+  aln-policy-revision:
+    description: "ALN policy revision identifier"
+    required: false
+    default: "acorch-01-ALN-001"
+  endpoint:
+    description: "ALN cache orchestrator endpoint"
+    required: false
+    default: "http://127.0.0.1:8080/actions-cache"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Compute dependency fingerprint
+      id: fingerprint
+      shell: bash
+      run: |
+        set -e
+        FP="${{ hashFiles(inputs.dependency-key-files) }}"
+        echo "fingerprint=${FP}" >> "$GITHUB_OUTPUT"
+
+    - name: ALN restore (best-effort)
+      id: aln-restore
+      shell: bash
+      env:
+        ACTIONS_CACHE_ENDPOINT: ${{ inputs.endpoint }}
+      run: |
+        set -e
+
+        if [ -z "${{ steps.fingerprint.outputs.fingerprint }}" ]; then
+          echo "No fingerprint; skipping ALN restore."
+          exit 0
+        fi
+
+        KEY_CONTEXT=$(cat <<'JSON'
+        {
+          "repo_id": "${{ github.repository_id }}",
+          "workflow_id": "${{ github.run_id }}",
+          "job_id": "${{ github.run_number }}",
+          "action_slug": "${{ inputs.action-slug }}",
+          "runner_os": "${{ runner.os }}",
+          "runner_arch": "x64",
+          "dependency_fingerprint_sha256": "${{ steps.fingerprint.outputs.fingerprint }}",
+          "aln_policy_revision": "${{ inputs.aln-policy-revision }}"
+        }
+        JSON
+        )
+
+        echo "ALN restore request: ${KEY_CONTEXT}"
+
+        set +e
+        RESPONSE=$(curl -sS -X POST \
+          -H "Content-Type: application/json" \
+          -d "${KEY_CONTEXT}" \
+          "${ACTIONS_CACHE_ENDPOINT}/restore")
+        STATUS=$?
+        set -e
+
+        echo "ALN restore response: ${RESPONSE}"
+        echo "aln_status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+    - name: Fallback restore via actions/cache
+      id: native-restore
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.cache-path }}
+        key: aln-${{ runner.os }}-${{ steps.fingerprint.outputs.fingerprint }}
+
+    - name: Run user build/test step marker
+      id: user-step-marker
+      shell: bash
+      run: |
+        echo "Composite action marker - user must run build/test steps after this uses: block."
+
+    - name: Estimate compute cost
+      id: estimate
+      shell: bash
+      run: |
+        # For now, use a constant estimate; platform can replace this with real timing.
+        echo "estimated_ms=60000" >> "$GITHUB_OUTPUT"
+
+    - name: ALN store (best-effort)
+      id: aln-store
+      shell: bash
+      env:
+        ACTIONS_CACHE_ENDPOINT: ${{ inputs.endpoint }}
+      run: |
+        set -e
+
+        if [ -z "${{ steps.fingerprint.outputs.fingerprint }}" ]; then
+          echo "No fingerprint; skipping ALN store."
+          exit 0
+        fi
+
+        ESTIMATE_MS="${{ steps.estimate.outputs.estimated_ms }}"
+
+        KEY_CONTEXT=$(cat <<'JSON'
+        {
+          "repo_id": "${{ github.repository_id }}",
+          "workflow_id": "${{ github.run_id }}",
+          "job_id": "${{ github.run_number }}",
+          "action_slug": "${{ inputs.action-slug }}",
+          "runner_os": "${{ runner.os }}",
+          "runner_arch": "x64",
+          "dependency_fingerprint_sha256": "${{ steps.fingerprint.outputs.fingerprint }}",
+          "aln_policy_revision": "${{ inputs.aln-policy-revision }}",
+          "object_size_bytes": 0,
+          "estimated_compute_ms": ESTIMATE_PLACEHOLDER
+        }
+        JSON
+        )
+
+        KEY_CONTEXT=${KEY_CONTEXT/ESTIMATE_PLACEHOLDER/${ESTIMATE_MS}}
+
+        echo "ALN store request: ${KEY_CONTEXT}"
+
+        set +e
+        RESPONSE=$(curl -sS -X POST \
+          -H "Content-Type: application/json" \
+          -d "${KEY_CONTEXT}" \
+          "${ACTIONS_CACHE_ENDPOINT}/store")
+        STATUS=$?
+        set -e
+
+        echo "ALN store response: ${RESPONSE}"
+        echo "aln_store_status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+    - name: Native cache save (safety net)
+      id: native-save
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.cache-path }}
+        key: aln-${{ runner.os }}-${{ steps.fingerprint.outputs.fingerprint }}
