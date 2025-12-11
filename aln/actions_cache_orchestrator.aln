@@ -1,0 +1,97 @@
+MODULE ActionsCacheOrchestrator
+    ID                  = "acorch-01-ALN-001"
+    SPEC_VERSION        = "ALN-1.0.0"
+    OWNER               = "github-platform-core"
+    SCOPE               = "multi-tenant-global"
+
+    DATA_PLANE {
+        STORAGE_CLASS           = "durable-object-cache"
+        BACKEND_TYPE            = "object-store+kv-index"
+        REDUNDANCY_LEVEL        = "zone-redundant"
+        GEO_REPLICATION         = true
+        ENCRYPTION_AT_REST      = "AES-256-GCM"
+        ENCRYPTION_IN_TRANSIT   = "TLS-1.3"
+        MAX_OBJECT_SIZE_MB      = 2048
+        MAX_CACHE_TTL_SEC       = 604800        # 7 days
+        DEFAULT_CACHE_TTL_SEC   = 86400         # 24 hours
+        RETENTION_HARD_LIMIT_D  = 30
+    }
+
+    CACHE_KEY_MODEL {
+        DIMENSIONS = [
+            "repo_id",
+            "workflow_id",
+            "job_id",
+            "action_slug",
+            "runner_os",
+            "runner_arch",
+            "dependency_fingerprint_sha256",
+            "aln_policy_revision"
+        ]
+        COLLISION_STRATEGY = "reject-on-collision"
+    }
+
+    EVICTION_POLICY {
+        MODE                    = "multi-factor"
+        PRIMARY_METRIC          = "last_access_ts"
+        SECONDARY_METRIC        = "compute_savings_estimate_ms"
+        TERTIARY_METRIC         = "storage_cost_per_1000_hits"
+        WATERMARK_SOFT_UTIL     = 0.80
+        WATERMARK_HARD_UTIL     = 0.95
+        SCAN_INTERVAL_SEC       = 300
+    }
+
+    QoS_GUARANTEES {
+        P99_READ_LATENCY_MS     <= 80
+        P99_WRITE_LATENCY_MS    <= 120
+        DURABILITY_11_NINES     = true
+        RPO_SEC                 <= 60
+        RTO_SEC                 <= 120
+    }
+
+    TELEMETRY_SCHEMA {
+        EVENT "cache_hit" {
+            FIELDS = {
+                "repo_id": STRING,
+                "workflow_id": STRING,
+                "job_id": STRING,
+                "action_slug": STRING,
+                "runner_os": STRING,
+                "runner_arch": STRING,
+                "latency_ms": INT,
+                "object_size_bytes": INT,
+                "saved_compute_ms": INT,
+                "policy_id": STRING
+            }
+        }
+        EVENT "cache_miss" {
+            FIELDS = {
+                "repo_id": STRING,
+                "workflow_id": STRING,
+                "job_id": STRING,
+                "reason": ENUM["key_not_found","expired","evicted","policy_blocked"],
+                "policy_id": STRING
+            }
+        }
+        EVENT "eviction" {
+            FIELDS = {
+                "object_id": STRING,
+                "reason": ENUM["capacity","age","low_value"],
+                "stored_days": INT,
+                "total_hits": INT,
+                "policy_id": STRING
+            }
+        }
+    }
+
+    BIO_COMPAT_MATRIX {
+        # Logical mapping for neuromorphic / augmented-user observability
+        SIGNALS = [
+            { NAME = "cache_pressure",   RANGE = [0.0, 1.0], RESOLUTION = 0.0001 },
+            { NAME = "latency_index",    RANGE = [0.0, 1.0], RESOLUTION = 0.0001 },
+            { NAME = "stability_score",  RANGE = [0.0, 1.0], RESOLUTION = 0.0001 }
+        ]
+        UPDATE_INTERVAL_MS = 500
+    }
+
+END MODULE
